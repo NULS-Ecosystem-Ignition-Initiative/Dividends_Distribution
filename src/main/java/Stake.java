@@ -619,60 +619,6 @@ public class Stake implements Contract{
         }
     }
 
-
-    class Withdrawn implements Event {
-        private Address user;
-        private BigInteger amount;
-
-        public Withdrawn(Address user, BigInteger amount) {
-            this.user = user;
-            this.amount = amount;
-        }
-
-        public Address getUser() {
-            return user;
-        }
-
-        public void setUser(Address user) {
-            this.user = user;
-        }
-
-        public BigInteger getAmount() {
-            return amount;
-        }
-
-        public void setAmount(BigInteger amount) {
-            this.amount = amount;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-
-            Withdrawn that = (Withdrawn) o;
-
-            if (user != null ? !user.equals(that.user) : that.user != null) return false;
-            return amount != null ? amount.equals(that.amount) : that.amount == null;
-        }
-
-        @Override
-        public int hashCode() {
-            int result = user != null ? user.hashCode() : 0;
-            result = 31 * result + (amount != null ? amount.hashCode() : 0);
-            return result;
-        }
-
-
-        @Override
-        public String toString() {
-            return "Withdrawn{" +
-                    "user=" + user +
-                    ", amount=" + amount +
-                    '}';
-        }
-    }
-
     class RewardPaid implements Event {
         private Address user;
         private BigInteger amount;

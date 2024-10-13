@@ -1,6 +1,5 @@
 Stake$RewardPaid.class
 Stake$Staked.class
-Stake$Withdrawn.class
 Ownable.class
 Stake$RewardAdded.class
 Stake.class
