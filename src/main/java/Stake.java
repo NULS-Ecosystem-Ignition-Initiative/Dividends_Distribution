@@ -37,6 +37,7 @@ public class Stake implements Contract{
     private long    lastUpdateTime;                     // Last time when rewards were updated
     private Address treasury;                           // Treasury Address that will receive Contract Revenue
     private Address rewardDistribution;                 // Address that manages Contract admin functions
+    private BigInteger operationFee;                    // A Fee charged in order to keep project operational
 
     private boolean     locked                = false;              // Prevent Reentrancy Attacks
     private long        periodFinish          = 0;                  // When the stake rewards will end
@@ -47,6 +48,7 @@ public class Stake implements Contract{
     private Map<Address, BigInteger> userRewardPerTokenPaid = new HashMap<Address, BigInteger>(); // User reward per token deposited
     private Map<Address, BigInteger> rewards                = new HashMap<Address, BigInteger>(); // Rewards Earned by User
     private Map<Address, BigInteger> _balances              = new HashMap<Address, BigInteger>(); // User ORA Tokens Deposited
+    private Map<Address, BigInteger> allTimeRewards         = new HashMap<Address, BigInteger>(); // All Time Rewards Earned by User
 
     /**
      * Constructor
@@ -54,10 +56,11 @@ public class Stake implements Contract{
      * @param depositToken Staking token
      * @param treasury  Treasury Address that will receive Contract Revenue
      * */
-    public Stake(Address depositToken, Address treasury ) {
+    public Stake(Address depositToken, Address treasury, BigInteger operationFee) {
 
         stakingToken            = depositToken;
         this.treasury           = treasury;
+        this.operationFee       = operationFee;
         rewardDistribution      = Msg.sender();
     }
 
@@ -118,6 +121,16 @@ public class Stake implements Contract{
     }
 
     /**
+     * Returns Operation Fee
+     *
+     * @return operation fee
+     */
+    @View
+    public BigInteger getOperationFee(){
+        return operationFee;
+    }
+
+    /**
      * Returns all the Nuls Oracle Tokens (ORA) deposited
      *
      * @return All Nuls Oracle Tokens deposited
@@ -165,6 +178,18 @@ public class Stake implements Contract{
      */
     @View
     public BigInteger earned(Address account) {
+        return _earned(account);
+    }
+
+    /**
+     *  Returns all time rewards in Nuls
+     *
+     * @return all time rewards in Nuls
+     */
+    @View
+    public BigInteger allTimeEarned(Address account) {
+        if(allTimeRewards.get(account) != null)
+            return allTimeRewards.get(account).add(_earned(account));
         return _earned(account);
     }
 
@@ -279,6 +304,7 @@ public class Stake implements Contract{
      *
      * @param amount Amount of ORA Tokens to deposit
      */
+    @Payable
     public void stake(BigInteger amount) {
 
         // Prevent Reentrancy Attacks
@@ -289,6 +315,9 @@ public class Stake implements Contract{
 
         // Require that the amount to deposit is bigger than 0
         require(amount.compareTo(BigInteger.ZERO) > 0, "Cannot stake 0");
+        require(Msg.value().compareTo(operationFee) >= 0, "Operation Fee not Paid");
+
+        treasury.transfer(operationFee);
 
         // Get user allowance and check if it is bigger than the amount to stake
         BigInteger allowance = getUserAllowance(stakingToken, Msg.sender(), Msg.address());
@@ -320,7 +349,8 @@ public class Stake implements Contract{
      *  revenue distribution
      *
      * @return nuls earned by user
-     * */
+     */
+    @Payable
     public BigInteger getReward() {
 
         // Prevent Reentrancy Attacks
@@ -328,6 +358,9 @@ public class Stake implements Contract{
 
         // Update user rewards to allow user to claim all earned rewards
         updateReward(Msg.sender());
+
+        require(Msg.value().compareTo(operationFee) >= 0, "Operation Fee not Paid");
+        treasury.transfer(operationFee);
 
         // Get amount of rewards
         BigInteger trueReward = rewards.get(Msg.sender());
@@ -338,6 +371,11 @@ public class Stake implements Contract{
             rewards.put(Msg.sender(), BigInteger.ZERO);
             Msg.sender().transfer(trueReward);
 
+            if(allTimeRewards.get(Msg.sender()) == null) {
+                allTimeRewards.put(Msg.sender(), trueReward);
+            }else{
+                allTimeRewards.put(Msg.sender(), allTimeRewards.get(Msg.sender()).add(trueReward));
+            }
             emit(new RewardPaid(Msg.sender(), trueReward));
         }
 
@@ -417,6 +455,17 @@ public class Stake implements Contract{
         onlyRewardDistribution();
         require(addr != null, "Invalid Treasury Address");
         treasury = addr;
+    }
+
+    /**
+     * Set New Treasury Address
+     *
+     * @param addr new Treasury Address
+     */
+    public void setOperationFee(BigInteger newFee){
+        onlyRewardDistribution();
+        require(newFee.compareTo(MIN_NULS_AMOUNT) >= 0, "Invalid Fee");
+        operationFee = newFee;
     }
 
     /**
