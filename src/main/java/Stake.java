@@ -13,40 +13,42 @@ import java.util.Map;
 import static io.nuls.contract.sdk.Utils.emit;
 import static io.nuls.contract.sdk.Utils.require;
 
+
+/**
+ * @title Nuls Oracles
+ *
+ *
+ * */
 public class Stake extends Ownable implements Contract{
 
-    private Address rewardsToken; // Reward Token
-    private Address stakingToken; // Staking Token
+    /// Constants
+    private static long DURATION = 86400 * 2;           // Rewards distribution period
 
-    public long periodFinish = 0; // When the stake rewards will end
-    public BigInteger rewardRate = BigInteger.ONE;
-    public int lock = 1;
+    /// Variables
+    private Address rewardsToken;                       // Reward Token
+    private Address stakingToken;                       // Staking Token
+    private long    lastUpdateTime;                     // Last time when rewards were updated
+    private Address treasury;                           // Treasury Address that will receive Contract Revenue
+    private Address rewardDistribution;                 // Address that manages Contract admin functions
 
-    //constants - DURATION - Stake period, PENALTY_TIME - Number of days until withdraw without penalties
-    public static long DURATION = 86400 * 2;
+    private boolean     locked                = false;              // Prevent Reentrancy Attacks
+    private long        periodFinish          = 0;                  // When the stake rewards will end
+    private BigInteger  rewardPerTokenStored  = BigInteger.ZERO;    // Current Reward Per Token Stored
+    private BigInteger  rewardRate            = BigInteger.ONE;     // Current Distribution Reward Rate
+    private BigInteger  _totalSupply          = BigInteger.ZERO;    // Total upply deposited in Contract
 
-    public long lastUpdateTime;
-    public BigInteger rewardPerTokenStored = BigInteger.ZERO;
-
-
-
-    private List<Address> transferAllowed = new ArrayList<>();
-
-    private BigInteger _totalSupply = BigInteger.ZERO;
-
-    public  Map<Address, BigInteger> userRewardPerTokenPaid = new HashMap<Address, BigInteger>();
-    public  Map<Address, BigInteger> rewards                = new HashMap<Address, BigInteger>();
+    private Map<Address, BigInteger> userRewardPerTokenPaid = new HashMap<Address, BigInteger>(); // User reward per token deposited
+    private Map<Address, BigInteger> rewards                = new HashMap<Address, BigInteger>();
     private Map<Address, BigInteger> totalRewards           = new HashMap<Address, BigInteger>();
     private Map<Address, BigInteger> _balances              = new HashMap<Address, BigInteger>();
-    private Map<Address, BigInteger> _updated               = new HashMap<Address, BigInteger>();
-    private Map<Address, BigInteger> migrated               = new HashMap<Address, BigInteger>();
-    public Map<Address, BigInteger> lockTime                = new HashMap<Address, BigInteger>();
 
-    private Address treasury;
-    private boolean allowWithdrawWithouLock;
-    public Address rewardDistribution;
-
-
+    /**
+     * Constructor
+     *
+     * @param depositToken Staking token
+     * @param rewardTokenAddress Token Reward Address
+     * @param treasury  Treasury Address that will receive Contract Revenue
+     * */
     public Stake(Address depositToken, String rewardTokenAddress, , Address treasury ) {
 
         stakingToken            = depositToken;
@@ -57,13 +59,13 @@ public class Stake extends Ownable implements Contract{
     }
 
     protected void nonReentrant(){
-        require(lock == 1, "Already Entered");
-        lock = 0;
+        require(!locked, "Already Entered");
+        locked = true;
     }
 
     protected void closeReentrant(){
-        require(lock == 0, "Not Entered");
-        lock = 1;
+        require(locked, "Not Entered");
+        locked = false;
     }
 
     /*===========================================
@@ -74,7 +76,7 @@ public class Stake extends Ownable implements Contract{
 
     /**
      *
-     * @return All NSWAP staked
+     * @return All Nuls Oracle Tokens staked
      */
     @View
     public BigInteger totalSupply() {
@@ -125,20 +127,6 @@ public class Stake extends Ownable implements Contract{
 
      ===========================================*/
 
-    public void addTransferAllowed(Address addr){
-        require(addr != null, "Invalid Address");
-        onlyRewardDistribution();
-        require(!transferAllowed.contains(addr), "Already added" );
-        transferAllowed.add(addr);
-    }
-
-    public void removeTransferAllowed(Address addr){
-        require(addr != null, "Invalid Address");
-        onlyRewardDistribution();
-        require(transferAllowed.contains(addr), "Not found" );
-        transferAllowed.remove(addr);
-    }
-
     public void setStakingToken(Address newToken){
         onlyOwner();
         require(newToken != null, "Invalid Address");
@@ -151,39 +139,13 @@ public class Stake extends Ownable implements Contract{
         treasury = addr;
     }
 
-    public void setAToken(Address newToken){
-        onlyOwner();
-        require(newToken != null, "Invalid Address");
-        rewardsToken = newToken;
-    }
-
-    public void removeLocks(){
-        onlyOwner();
-        allowWithdrawWithouLock = !allowWithdrawWithouLock;
-    }
-
-    @View
-    public Address getAToken(){
-        return rewardsToken;
-    }
-
     @View
     public Address getStakingToken(){
         return stakingToken;
     }
 
-    @View
-    public boolean isTransferAllowed(Address addr){
-        require(addr != null, "Invalid Address");
-        return  transferAllowed.contains(addr);
-    }
-
     private void onlyRewardDistribution() {
         require(Msg.sender().equals(rewardDistribution), "Caller is not reward distribution");
-    }
-
-    private void onlyAllowed(Address user, Address user2) {
-        require(transferAllowed.contains(user) || transferAllowed.contains(user2), "Caller is not allowed");
     }
 
     /*===========================================
@@ -203,18 +165,17 @@ public class Stake extends Ownable implements Contract{
 
     /*===========================================
 
-      STATE CHANGERS
+      NON-ADMIN STATE MODIFIABLE FUNCTIONS
 
      ===========================================*/
 
     @Override
     @Payable
-    public void _payable() { treasury.transfer(Msg.value()); }
-
+    public void _payable() { notifyRewardAmount(Msg.value()); }
 
     /**
      *
-     * @param amount
+     * @param amount Amount of ORA Tokens to Stake
      */
     public void stake(BigInteger amount) {
 
@@ -248,24 +209,9 @@ public class Stake extends Ownable implements Contract{
         closeReentrant();
     }
 
-    public BigInteger withdraw(BigInteger b) {
-
-        updateReward(Msg.sender());
-
-        //Get Rewards from staking first
-        getReward();
-
-        //Remover from the total supplied and from the user staked
-        _totalSupply = _totalSupply.subtract(b);
-        _balances.put(Msg.sender(), _balances.get(Msg.sender()).subtract(b));
-
-        //Safe Staked amount and emit event
-        safeTransfer(stakingToken, Msg.sender(), b);
-        emit(new Withdrawn(Msg.sender(), b));
-        return b;
-    }
-
     private BigInteger getReward() {
+
+        nonReentrant();
 
         updateReward(Msg.sender());
 
@@ -276,32 +222,27 @@ public class Stake extends Ownable implements Contract{
             Msg.sender().transfer(trueReward);
             emit(new RewardPaid(Msg.sender(), trueReward));
         }
+
+        closeReentrant();
+
         return trueReward;
     }
 
-    public void recoverNRC20(Address tkn_) {
-        //Only rewarder address can give reward
-        onlyRewardDistribution();
-        require(tkn_ != null, "Token Must be non-zero");
 
-        String[][] argI = new String[][]{new String[]{Msg.address().toString()}};
-        BigInteger b = new BigInteger(tkn_.callWithReturnValue("balanceOf", "", argI, BigInteger.ZERO));
-
-        safeTransfer(tkn_, rewardDistribution, b);
-    }
 
     /**
      *
      * @param reward
      */
+    @Payable
     public void notifyRewardAmount(BigInteger reward) {
-        //Only rewarder address can give reward
-        onlyRewardDistribution();
+
+        nonReentrant();
+
+        require(Msg.value().compareTo(reward) >= 0)
 
         //Update last time disributed rewards
         updateReward(null);
-
-        safeTransferFrom(stakingToken, Msg.sender(), Msg.address(), reward);
 
         //
         if (Block.timestamp() >= periodFinish) {
@@ -317,7 +258,29 @@ public class Stake extends Ownable implements Contract{
 
         lastUpdateTime = Block.timestamp();
         periodFinish = Block.timestamp() + DURATION;
+
         emit(new RewardAdded(reward));
+
+        closeReentrant();
+
+    }
+
+    /*===========================================
+
+      ADMIN STATE MODIFIABLE FUNCTIONS
+
+     ===========================================*/
+
+    public void recoverNRC20(Address tkn_) {
+        //Only rewarder address can give reward
+        onlyRewardDistribution();
+
+        require(tkn_ != null, "Token Must be non-zero");
+
+        String[][] argI = new String[][]{new String[]{Msg.address().toString()}};
+        BigInteger b = new BigInteger(tkn_.callWithReturnValue("balanceOf", "", argI, BigInteger.ZERO));
+
+        safeTransfer(tkn_, rewardDistribution, b);
     }
 
     /*===========================================
@@ -366,12 +329,6 @@ public class Stake extends Ownable implements Contract{
 
     }
 
-    private void safeMint(@Required Address recipient, @Required BigInteger amount){
-        String[][] a = new String[][]{new String[]{recipient.toString()}, new String[]{amount.toString()}};
-        boolean b = new Boolean(rewardsToken.callWithReturnValue("mint", "", a, BigInteger.ZERO));
-        require(b, "NulswapV1: Failed to transfer");
-    }
-
     private void safeTransfer(@Required Address token, @Required Address recipient, @Required BigInteger amount){
         String[][] argsM = new String[][]{new String[]{recipient.toString()}, new String[]{amount.toString()}};
         boolean b = new Boolean(token.callWithReturnValue("transfer", "", argsM, BigInteger.ZERO));
@@ -390,11 +347,11 @@ public class Stake extends Ownable implements Contract{
         return b;
     }
 
-    private BigInteger min(BigInteger a, BigInteger b) {
-        return a.compareTo(b) < 0 ? a : b;
-    }
-
-    /*=============Events=================*/
+    /*====================================
+    *
+    * Events
+    *
+    * ====================================*/
 
 
     class Staked implements Event {
