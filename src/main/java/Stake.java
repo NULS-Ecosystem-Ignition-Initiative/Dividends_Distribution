@@ -52,10 +52,9 @@ public class Stake implements Contract{
      * Constructor
      *
      * @param depositToken Staking token
-     * @param rewardTokenAddress Token Reward Address
      * @param treasury  Treasury Address that will receive Contract Revenue
      * */
-    public Stake(Address depositToken, String rewardTokenAddress, Address treasury ) {
+    public Stake(Address depositToken, Address treasury ) {
 
         stakingToken            = depositToken;
         this.treasury           = treasury;
